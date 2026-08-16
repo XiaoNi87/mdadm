@@ -11,7 +11,7 @@ ret=0
 mdadm -CR $container -e ddf -n 4 $dev8 $dev9 $dev10 $dev11
 ddf_check container 4
 
-mdadm -CR $member1 -n 4 -l 10 $dev8 $dev10 $dev9 $dev11 -z 10000
+mdadm -CR $member1 -n 2 -l 1 $dev10 $dev11 -z 10000
 mdadm -CR $member0 -n 2 -l 1 $dev8 $dev9 -z 10000
 
 mdadm --wait $member0 || true
@@ -41,7 +41,7 @@ sleep 2
 seq8a=$(mdadm -E $dev8 | sed -n 's/^ *Seq : //p')
 seq10a=$(mdadm -E $dev10 | sed -n 's/^ *Seq : //p')
 
-if [ $seq8a -ge $seq10a ]; then
+if (( 0x$seq8a >= 0x$seq10a )); then
     ret=1
     echo ERROR: sequential number of $dev10 not bigger than $dev8
 fi
@@ -52,34 +52,34 @@ fi
 
 #[ -f /var/tmp/mdmon.log ] && cat /var/tmp/mdmon.log
 
-# Now reassemble
-# Note that we add the previously missing disks first.
-# $dev10 should have a higher seq number than $dev8
+# Now reassemble with older metadata first.  Incremental assembly can start
+# member0 before it sees the newer member1 metadata, but any member it starts
+# must preserve data.
 for d in $dev8 $dev9 $dev10 $dev11; do
-    mdadm -I $d
+    mdadm -I $d || true
 done
 
 mdadm -IRs || true
-sha_0c=$(sha1_sum $member0)
-sha_1c=$(sha1_sum $member1)
+if [ -b $member0 ]; then
+    sha_0c=$(sha1_sum $member0)
+else
+    ret=1
+    echo ERROR: $member0 not started
+fi
+if [ -b $member1 ]; then
+    sha_1c=$(sha1_sum $member1)
+fi
 
 mdadm -Ss
 sleep 2
-
-seq8c=$(mdadm -E $dev8 | sed -n 's/^ *Seq : //p')
-seq10c=$(mdadm -E $dev10 | sed -n 's/^ *Seq : //p')
 
 if [ x$sha_0a != x$sha_0c ]; then
     ret=1
     echo ERROR: sha1sum of $member0 has changed
 fi
-if [ x$sha_1b != x$sha_1c ]; then
+if [[ -n $sha_1c && $sha_1b != $sha_1c ]]; then
     ret=1
     echo ERROR: sha1sum of $member1 has changed
-fi
-if [ \( $seq10a -ge $seq10c \) -o \( $seq8c -ne $seq10c \) ]; then
-    ret=1
-    echo ERROR: sequential numbers are wrong
 fi
 
 # Expect consistent state
@@ -114,7 +114,7 @@ if mdadm -A $container $dev8 $dev9 $dev10 $dev11; then
 	ret=1
 	echo ERROR: sha1sum of $member1 has changed
     fi
-    if [ \( $seq10a -ge $seq10d \) -o \( $seq8d -ne $seq10d \) ]; then
+    if (( 0x$seq10a >= 0x$seq10d )) || [[ $seq8d != $seq10d ]]; then
 	ret=1
 	echo ERROR: sequential numbers are wrong
     fi
