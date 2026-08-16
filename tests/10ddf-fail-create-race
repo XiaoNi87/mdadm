@@ -25,7 +25,10 @@ if mdadm -CR $member1 -l raid1 -n 2 $container; then
 
    check wait
    set -- $(get_raiddisks $member0)
-   d0=$1
+   d0=
+   for d in "$@"; do
+       [ "$d" = MISSING ] || { d0=$d; break; }
+   done
    ret=0
    if [ $1 = $fail0 -o $2 = $fail0 ]; then
        ret=1
@@ -41,16 +44,21 @@ if mdadm -CR $member1 -l raid1 -n 2 $container; then
        echo $member1: $(get_raiddisks $member1)
    fi
    tmp=$(mktemp /tmp/mdest-XXXXXX)
-   mdadm -E $d0 >$tmp
-   if [ x$(grep -c 'state\[[01]\] : Degraded' $tmp) != x2 ]; then
-       echo ERROR: non-degraded array found
-       mdadm -E $d0
+   if [ -z "$d0" ]; then
+       echo ERROR: no present disk found for metadata check
        ret=1
-   fi
-   if ! grep -q '^  *0  *[0-9a-f]\{8\} .*Offline, Failed' $tmp; then
-       echo ERROR: disk 0 not marked as failed in meta data
-       mdadm -E $d0
-       ret=1
+   else
+       mdadm -E $d0 >$tmp
+       if [ x$(grep -c 'state\[[01]\] : Degraded' $tmp) != x2 ]; then
+	   echo ERROR: non-degraded array found
+	   mdadm -E $d0
+	   ret=1
+       fi
+       if ! grep -q '^  *0  *[0-9a-f]\{8\} .*Offline, Failed' $tmp; then
+	   echo ERROR: disk 0 not marked as failed in meta data
+	   mdadm -E $d0
+	   ret=1
+       fi
    fi
    rm -f $tmp
 else
@@ -63,4 +71,3 @@ fi
 }
 
 [ $ret -eq 0 ]
-
