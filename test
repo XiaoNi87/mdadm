@@ -6,6 +6,7 @@ targetdir="/var/tmp"
 logdir="$targetdir"
 config=/tmp/mdadm.conf
 testdir=$PWD/tests
+dir=${dir:-$(dirname "$mdadm")}
 
 # used by tests
 system_speed_limit_max=0
