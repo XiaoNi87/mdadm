@@ -46,6 +46,7 @@ test_incremental() {
     done
     check inactive
     mdadm -I $dev4
+    sleep 2
     check raid5
     mdadm -S $md0
 

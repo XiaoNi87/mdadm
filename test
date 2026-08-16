@@ -218,6 +218,20 @@ do_help() {
 	EOF
 }
 
+resolve_test_path() {
+	local script=$1
+
+	if [ -f "$script" ]; then
+		echo "$script"
+	elif [ -f "$testdir/$script" ]; then
+		echo "$testdir/$script"
+	else
+		echo "Invalid script: '$script'." >&2
+		echo "Looked for '$script' and '$testdir/$script'." >&2
+		return 1
+	fi
+}
+
 parse_args() {
 	for i in $*
 	do
@@ -383,7 +397,10 @@ main() {
 		then
 			for script in ${TESTLIST[@]}
 			do
-				do_test $testdir/$script
+				if ! script_path=$(resolve_test_path "$script"); then
+					exit 1
+				fi
+				do_test "$script_path"
 			done
 		else
 			for script in $testdir/$prefix $testdir/$prefix*[^~]
