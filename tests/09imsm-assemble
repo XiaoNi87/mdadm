@@ -11,7 +11,7 @@ imsm_check_hold() {
    fi
 }
 
-imsm_check_removal() {
+imsm_check_fell_out() {
     local ret=5
     local success=0
 
@@ -20,15 +20,30 @@ imsm_check_removal() {
             success=1
             break
         fi
+        if grep -q "is not a member, cannot remove" "$targetdir/stderr"; then
+            success=1
+            break
+        fi
         sleep 2
     done
 
     if [ $success -ne 1 ]; then
-        echo "$2 removal from $1 should have succeeded" >&2
+        echo "$2 should have fallen out of $1 or been removable" >&2
         cat /proc/mdstat >&2
         mdadm -E "$2"
         exit 1
     fi
+}
+
+imsm_member_has_disk() {
+    mdadm -D "$1" | awk -v dev="$2" '
+        /RaidDevice/ { devices=1; next }
+        devices && $(NF-2) == "active" && $(NF-1) == "sync" && $NF == dev { found=1 }
+        END { exit !found }'
+}
+
+imsm_check_active_family() {
+    imsm_member_has_disk "$1" "$2" && imsm_member_has_disk "$1" "$3"
 }
 
 export IMSM_DEVNAME_AS_SERIAL=1
@@ -61,16 +76,23 @@ mdadm -Ss
 mdadm -A $container $dev0 $dev1 $dev2 $dev3
 mdadm -IR $container
 testdev ${member}_0 1 $size 64
-if mdadm --remove $container $dev0 ; then
+if imsm_check_active_family ${member}_0 $dev0 $dev1 ; then
+    # the dev[01] family won
+    imsm_check_hold $container $dev0
+    imsm_check_hold $container $dev1
+    imsm_check_fell_out $container $dev2
+    imsm_check_fell_out $container $dev3
+elif imsm_check_active_family ${member}_0 $dev2 $dev3 ; then
     # the dev[23] family won
-    imsm_check_removal $container $dev1
+    imsm_check_fell_out $container $dev0
+    imsm_check_fell_out $container $dev1
     imsm_check_hold $container $dev2
     imsm_check_hold $container $dev3
 else
-    # the dev[01] family won
-    imsm_check_hold $container $dev1
-    imsm_check_removal $container $dev2
-    imsm_check_removal $container $dev3
+    echo "could not determine assembled IMSM family" >&2
+    cat /proc/mdstat >&2
+    mdadm -D ${member}_0 >&2
+    exit 1
 fi
 mdadm -Ss
 
