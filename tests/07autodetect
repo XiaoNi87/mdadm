@@ -5,7 +5,9 @@
 # put a partition on each, create an array, and see if we can
 # use autodetect to restart the array.
 
-[if lsmod | grep md_mod > /dev/null 2>&1] || skip "md is a module - cannot test autodetect"
+if grep -q '^md_mod\>' /proc/modules; then
+	skip "md is a module - cannot test autodetect"
+fi
 
 mdadm -CR -e 0 $mdp0 -l0 -f -n1 $dev0
 mdadm -CR -e 0 $mdp1 -l0 -f -n1 $dev1
