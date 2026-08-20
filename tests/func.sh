@@ -213,13 +213,23 @@ restore_selinux() {
 wait_for_reshape_end() {
 	# wait for grow-continue to finish but break if sync_action does not
 	# contain any reshape value
+	local deadline=0
+
 	while true
 	do
 		sync_action=$(grep -Ec '(resync|recovery|reshape|check|repair) *=' /proc/mdstat)
 		if (( "$sync_action" != 0 )); then
 			sleep 2
+			deadline=0
 			continue
-		elif pgrep -f 'mdadm .*(-G|--grow).*(--continue|--backup-file)' > /dev/null; then
+		elif pgrep -f '[m]dadm .*(-G|--grow).*(--continue|--backup-file)' > /dev/null; then
+			if (( deadline == 0 )); then
+				deadline=$(($(date +%s) + 30))
+			fi
+			if (( $(date +%s) < deadline )); then
+				sleep 1
+				continue
+			fi
 			echo "Grow continue did not finish but reshape is done" >&2
 			exit 1
 		else
