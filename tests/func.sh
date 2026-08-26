@@ -194,12 +194,20 @@ is_raid_foreign() {
 }
 
 record_selinux() {
-	sys_selinux=`getenforce`
-	setenforce Permissive
+	if command -v getenforce > /dev/null && command -v setenforce > /dev/null
+	then
+		sys_selinux=`getenforce`
+		[ "$sys_selinux" != "Disabled" ] && setenforce Permissive
+	else
+		sys_selinux=
+	fi
 }
 
 restore_selinux() {
-	setenforce $sys_selinux
+	[ -n "$sys_selinux" ] &&
+	[ "$sys_selinux" != "Disabled" ] &&
+	command -v setenforce > /dev/null &&
+		setenforce $sys_selinux
 }
 
 wait_for_reshape_end() {
