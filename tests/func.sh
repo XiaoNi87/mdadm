@@ -219,7 +219,7 @@ wait_for_reshape_end() {
 		if (( "$sync_action" != 0 )); then
 			sleep 2
 			continue
-		elif [[ $(pgrep -f "mdadm --grow --continue" > /dev/null) != "" ]]; then
+		elif pgrep -f 'mdadm .*(-G|--grow).*(--continue|--backup-file)' > /dev/null; then
 			echo "Grow continue did not finish but reshape is done" >&2
 			exit 1
 		else
