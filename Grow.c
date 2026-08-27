@@ -4306,6 +4306,19 @@ static int grow_backup(struct mdinfo *sra,
 
 	if (rv)
 		return rv;
+
+	/*
+	 * Make backup data durable before publishing metadata that marks it
+	 * usable after a crash.
+	 */
+	for (i = 0; i < dests; i++) {
+		if (fsync(destfd[i]) != 0) {
+			pr_err("Failed to fsync backup data: %s\n",
+				strerror(errno));
+			return -1;
+		}
+	}
+
 	bsb.mtime = __cpu_to_le64(time(0));
 	for (i = 0; i < dests; i++) {
 		unsigned long long seek = destoffsets[i] + stripes * chunk * odata;
@@ -4330,7 +4343,11 @@ static int grow_backup(struct mdinfo *sra,
 			if (write(destfd[i], &bsb, 512) != 512)
 				break;
 		}
-		fsync(destfd[i]);
+		if (fsync(destfd[i]) != 0) {
+			pr_err("Failed to fsync backup metadata: %s\n",
+				strerror(errno));
+			break;
+		}
 		rv = 0;
 	}
 
