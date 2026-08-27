@@ -3018,6 +3018,16 @@ static mdadm_status_t handle_forking(bool forked, char *devname)
 
 }
 
+static bool reshape_is_complete(struct mdinfo *info)
+{
+	char buf[SYSFS_MAX_BUF_SIZE];
+
+	if (sysfs_get_str(info, NULL, "reshape_position", buf, sizeof(buf)) < 0)
+		return false;
+
+	return str_is_none(buf);
+}
+
 static int reshape_array(char *container, int fd, char *devname,
 			 struct supertype *st, struct mdinfo *info,
 			 int force, struct mddev_dev *devlist,
@@ -4079,8 +4089,10 @@ int progress_reshape(struct mdinfo *info, struct reshape *reshape,
 		wait_point = info->component_size - wait_point;
 	}
 
-	if (!*frozen)
-		sysfs_set_num(info, NULL, "sync_max", max_progress);
+	if (!*frozen &&
+	    sysfs_set_num(info, NULL, "sync_max", max_progress) < 0 &&
+	    errno == EBUSY && reshape_is_complete(info))
+		return -1;
 
 	/* Now wait.  If we have already reached the point that we were
 	 * asked to wait to, don't wait at all, else wait for any change.
@@ -4134,10 +4146,13 @@ int progress_reshape(struct mdinfo *info, struct reshape *reshape,
 		unsigned long long reshapep;
 		char action[SYSFS_MAX_BUF_SIZE];
 		if (sysfs_get_str(info, NULL, "sync_action", action, sizeof(action)) > 0 &&
-		    strncmp(action, "idle", 4) == 0 &&
-		    sysfs_get_ll(info, NULL,
-				 "reshape_position", &reshapep) == 0)
-			*reshape_completed = reshapep;
+		    strncmp(action, "idle", 4) == 0) {
+			if (reshape_is_complete(info))
+				return -1;
+			if (sysfs_get_ll(info, NULL,
+					 "reshape_position", &reshapep) == 0)
+				*reshape_completed = reshapep;
+		}
 	} else {
 		/* some kernels can give an incorrectly high
 		 * 'completed' number, so round down */
