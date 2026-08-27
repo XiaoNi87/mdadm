@@ -4369,57 +4369,75 @@ static int forget_backup(int dests, int *destfd,
 	return rv;
 }
 
-static void fail(char *msg)
+static int validate_fail(char *msg)
 {
 	int rv;
+
 	rv = (write(2, msg, strlen(msg)) != (int)strlen(msg));
 	rv |= (write(2, "\n", 1) != 1);
-	exit(rv ? 1 : 2);
+	return rv ? 1 : 2;
 }
 
 static char *abuf, *bbuf;
 static unsigned long long abuflen;
-static void validate(int afd, int bfd, unsigned long long offset)
+
+static void validate_free_buffers(void)
+{
+	free(abuf);
+	free(bbuf);
+	abuf = NULL;
+	bbuf = NULL;
+	abuflen = 0;
+}
+
+static int validate_alloc_buffers(unsigned long long len)
+{
+	if (abuflen >= len)
+		return 0;
+
+	validate_free_buffers();
+	abuflen = len;
+	if (posix_memalign((void **)&abuf, 4096, abuflen) ||
+	    posix_memalign((void **)&bbuf, 4096, abuflen)) {
+		validate_free_buffers();
+		return -1;
+	}
+
+	return 0;
+}
+
+static int validate(int afd, int bfd, unsigned long long offset)
 {
 	/* check that the data in the backup against the array.
 	 * This is only used for regression testing and should not
 	 * be used while the array is active
 	 */
 	if (afd < 0)
-		return;
+		return 0;
 	if (lseek(bfd, offset - 4096, 0) < 0) {
 		pr_err("lseek fails %d:%s\n", errno, strerror(errno));
-		return;
+		return validate_fail("cannot seek backup metadata");
 	}
 	if (read(bfd, &bsb2, 512) != 512)
-		fail("cannot read bsb");
+		return validate_fail("cannot read bsb");
 	if (bsb2.sb_csum != bsb_csum((char*)&bsb2,
 				     ((char*)&bsb2.sb_csum)-((char*)&bsb2)))
-		fail("first csum bad");
+		return validate_fail("first csum bad");
 	if (memcmp(bsb2.magic, "md_backup_data", 14) != 0)
-		fail("magic is bad");
+		return validate_fail("magic is bad");
 	if (memcmp(bsb2.magic, "md_backup_data-2", 16) == 0 &&
 	    bsb2.sb_csum2 != bsb_csum((char*)&bsb2,
 				      ((char*)&bsb2.sb_csum2)-((char*)&bsb2)))
-		fail("second csum bad");
+		return validate_fail("second csum bad");
 
 	if (__le64_to_cpu(bsb2.devstart)*512 != offset)
-		fail("devstart is wrong");
+		return validate_fail("devstart is wrong");
 
 	if (bsb2.length) {
 		unsigned long long len = __le64_to_cpu(bsb2.length)*512;
 
-		if (abuflen < len) {
-			free(abuf);
-			free(bbuf);
-			abuflen = len;
-			if (posix_memalign((void**)&abuf, 4096, abuflen) ||
-			    posix_memalign((void**)&bbuf, 4096, abuflen)) {
-				abuflen = 0;
-				/* just stop validating on mem-alloc failure */
-				return;
-			}
-		}
+		if (validate_alloc_buffers(len))
+			return validate_fail("cannot allocate validation buffers");
 
 		if (lseek(bfd, offset, 0) < 0) {
 			pr_err("lseek fails %d:%s\n", errno, strerror(errno));
@@ -4427,7 +4445,7 @@ static void validate(int afd, int bfd, unsigned long long offset)
 		}
 		if ((unsigned long long)read(bfd, bbuf, len) != len) {
 			//printf("len %llu\n", len);
-			fail("read first backup failed");
+			return validate_fail("read first backup failed");
 		}
 
 		if (lseek(afd, __le64_to_cpu(bsb2.arraystart)*512, 0) < 0) {
@@ -4435,40 +4453,33 @@ static void validate(int afd, int bfd, unsigned long long offset)
 			goto out;
 		}
 		if ((unsigned long long)read(afd, abuf, len) != len)
-			fail("read first from array failed");
+			return validate_fail("read first from array failed");
 		if (memcmp(bbuf, abuf, len) != 0)
-			fail("data1 compare failed");
+			return validate_fail("data1 compare failed");
 	}
 	if (bsb2.length2) {
 		unsigned long long len = __le64_to_cpu(bsb2.length2)*512;
 
-		if (abuflen < len) {
-			free(abuf);
-			free(bbuf);
-			abuflen = len;
-			abuf = xmalloc(abuflen);
-			bbuf = xmalloc(abuflen);
-		}
+		if (validate_alloc_buffers(len))
+			return validate_fail("cannot allocate validation buffers");
 
 		if (lseek(bfd, offset+__le64_to_cpu(bsb2.devstart2)*512, 0) < 0) {
 			pr_err("lseek fails %d:%s\n", errno, strerror(errno));
 			goto out;
 		}
 		if ((unsigned long long)read(bfd, bbuf, len) != len)
-			fail("read second backup failed");
+			return validate_fail("read second backup failed");
 		if (lseek(afd, __le64_to_cpu(bsb2.arraystart2)*512, 0) < 0) {
 			pr_err("lseek fails %d:%s\n", errno, strerror(errno));
 			goto out;
 		}
 		if ((unsigned long long)read(afd, abuf, len) != len)
-			fail("read second from array failed");
+			return validate_fail("read second from array failed");
 		if (memcmp(bbuf, abuf, len) != 0)
-			fail("data2 compare failed");
+			return validate_fail("data2 compare failed");
 	}
 out:
-	free(abuf);
-	free(bbuf);
-	return;
+	return 0;
 }
 
 int child_monitor(int afd, struct mdinfo *sra, struct reshape *reshape,
@@ -4649,10 +4660,13 @@ int child_monitor(int afd, struct mdinfo *sra, struct reshape *reshape,
 			}
 			if (actual_stripes == 0)
 				break;
-			grow_backup(sra, offset, actual_stripes, fds, offsets,
-				    disks, chunk, level, layout, dests, destfd,
-				    destoffsets, part, &degraded, buf);
-			validate(afd, destfd[0], destoffsets[0]);
+			if (grow_backup(sra, offset, actual_stripes, fds,
+					offsets, disks, chunk, level, layout,
+					dests, destfd, destoffsets, part,
+					&degraded, buf))
+				goto abort;
+			if (validate(afd, destfd[0], destoffsets[0]))
+				goto abort;
 			/* record where 'part' is up to */
 			part = !part;
 			if (increasing)
@@ -4662,6 +4676,10 @@ int child_monitor(int afd, struct mdinfo *sra, struct reshape *reshape,
 		}
 	}
 
+	goto out;
+abort:
+	done = 0;
+out:
 	/* FIXME maybe call progress_reshape one more time instead */
 	/* remove any remaining suspension */
 	sysfs_set_num(sra, NULL, "suspend_lo", 0x7FFFFFFFFFFFFFFFULL);
@@ -4669,6 +4687,7 @@ int child_monitor(int afd, struct mdinfo *sra, struct reshape *reshape,
 	sysfs_set_num(sra, NULL, "suspend_lo", 0);
 	sysfs_set_num(sra, NULL, "sync_min", 0);
 
+	validate_free_buffers();
 	free(buf);
 	return done;
 }
