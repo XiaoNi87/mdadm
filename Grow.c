@@ -926,10 +926,7 @@ int start_reshape(struct mdinfo *sra, int already_running,
 	if (!already_running)
 		sysfs_set_num(sra, NULL, "sync_min", sync_max_to_set);
 
-        if (st->ss->external)
-		err = err ?: sysfs_set_num(sra, NULL, "sync_max", sync_max_to_set);
-	else
-		err = err ?: sysfs_set_str(sra, NULL, "sync_max", "max");
+	err = err ?: sysfs_set_num(sra, NULL, "sync_max", sync_max_to_set);
 
 	if (!already_running && err == 0) {
 		int cnt = 5;
