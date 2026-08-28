@@ -4584,7 +4584,7 @@ int child_monitor(int afd, struct mdinfo *sra, struct reshape *reshape,
 	if (increasing) {
 		array_size = sra->component_size * reshape->after.data_disks;
 		backup_point = sra->reshape_progress;
-		suspend_point = 0;
+		suspend_point = sra->reshape_progress;
 	} else {
 		array_size = sra->component_size * reshape->before.data_disks;
 		backup_point = reshape->backup_blocks;
