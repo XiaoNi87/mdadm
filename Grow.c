@@ -1171,18 +1171,25 @@ int reshape_open_backup_file(char *backup_file,
 		return 0;
 	}
 
-	if (!restart && strncmp(backup_file, MAP_DIR, strlen(MAP_DIR)) != 0) {
+	if (!restart &&
+	    strncmp(backup_file, BACKUP_DIR, strlen(BACKUP_DIR)) != 0) {
 		char *bu = make_backup(sys_name);
 		char *target = backup_file;
 		char *resolved = NULL;
 
+		if (mkdir(BACKUP_DIR, 0755) && errno != EEXIST) {
+			pr_err("Creating backup directory " BACKUP_DIR
+			       " failed: %s\n", strerror(errno));
+			free(bu);
+			return 1;
+		}
 		if (backup_file[0] != '/') {
 			resolved = realpath(backup_file, NULL);
 			if (resolved)
 				target = resolved;
 		}
 		if (symlink(target, bu))
-			pr_err("Recording backup file in " MAP_DIR " failed: %s\n",
+			pr_err("Recording backup file in " BACKUP_DIR " failed: %s\n",
 			       strerror(errno));
 		free(resolved);
 		free(bu);
@@ -5304,9 +5311,9 @@ char *make_backup(char *name)
 	int len;
 	char *fname;
 
-	len = strlen(MAP_DIR) + 1 + strlen(base) + strlen(name)+1;
+	len = strlen(BACKUP_DIR) + 1 + strlen(base) + strlen(name) + 1;
 	fname = xmalloc(len);
-	sprintf(fname, "%s/%s%s", MAP_DIR, base, name);
+	sprintf(fname, "%s/%s%s", BACKUP_DIR, base, name);
 	return fname;
 }
 

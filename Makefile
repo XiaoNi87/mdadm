@@ -114,6 +114,8 @@ CHECK_RUN_DIR=1
 MAP_DIR=$(RUN_DIR)
 MAP_FILE = map
 MAP_PATH = $(MAP_DIR)/$(MAP_FILE)
+# Reshape backup file links must survive a reboot.
+BACKUP_DIR = /var/lib/mdadm
 MDMON_DIR = $(RUN_DIR)
 # place for autoreplace cookies
 FAILED_SLOTS_DIR = $(RUN_DIR)/failed-slots
@@ -124,6 +126,7 @@ COROSYNC:=$(shell $(PKG_CONFIG) --exists corosync || echo -DNO_COROSYNC)
 DLM:=$(shell $(PKG_CONFIG) --exists libdlm || echo -DNO_DLM)
 
 DIRFLAGS = -DMAP_DIR=\"$(MAP_DIR)\" -DMAP_FILE=\"$(MAP_FILE)\"
+DIRFLAGS += -DBACKUP_DIR=\"$(BACKUP_DIR)\"
 DIRFLAGS += -DMDMON_DIR=\"$(MDMON_DIR)\"
 DIRFLAGS += -DFAILED_SLOTS_DIR=\"$(FAILED_SLOTS_DIR)\"
 CFLAGS = $(CWFLAGS) $(CXFLAGS) -DSendmail=\""$(MAILCMD)"\" $(CONFFILEFLAGS) $(DIRFLAGS) $(COROSYNC) $(DLM)
