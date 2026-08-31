@@ -1118,6 +1118,16 @@ release:
 	return d;
 }
 
+static void remove_backup_link(char *sys_name)
+{
+	char *backup_link = make_backup(sys_name);
+	struct stat stb;
+
+	if (lstat(backup_link, &stb) == 0 && S_ISLNK(stb.st_mode))
+		unlink(backup_link);
+	free(backup_link);
+}
+
 int reshape_open_backup_file(char *backup_file,
 			     int fd,
 			     char *devname,
@@ -1162,13 +1172,13 @@ int reshape_open_backup_file(char *backup_file,
 		if (write(*fdlist, buf, 512) != 512) {
 			pr_err("%s: cannot create backup file %s: %s\n",
 				devname, backup_file, strerror(errno));
-			return 0;
+			goto error;
 		}
 	}
 	if (fsync(*fdlist) != 0) {
 		pr_err("%s: cannot create backup file %s: %s\n",
 			devname, backup_file, strerror(errno));
-		return 0;
+		goto error;
 	}
 
 	if (!restart &&
@@ -1176,21 +1186,32 @@ int reshape_open_backup_file(char *backup_file,
 		char *bu = make_backup(sys_name);
 		char *target = backup_file;
 		char *resolved = NULL;
+		char *tmp;
+		int err;
 
 		if (mkdir(BACKUP_DIR, 0755) && errno != EEXIST) {
 			pr_err("Creating backup directory " BACKUP_DIR
 			       " failed: %s\n", strerror(errno));
 			free(bu);
-			return 1;
+			goto error;
 		}
 		if (backup_file[0] != '/') {
 			resolved = realpath(backup_file, NULL);
 			if (resolved)
 				target = resolved;
 		}
-		if (symlink(target, bu))
+		xasprintf(&tmp, "%s.new-%d", bu, getpid());
+		if (symlink(target, tmp) || rename(tmp, bu)) {
+			err = errno;
+			unlink(tmp);
 			pr_err("Recording backup file in " BACKUP_DIR " failed: %s\n",
-			       strerror(errno));
+			       strerror(err));
+			free(tmp);
+			free(resolved);
+			free(bu);
+			goto error;
+		}
+		free(tmp);
 		free(resolved);
 		free(bu);
 	}
@@ -1198,6 +1219,9 @@ int reshape_open_backup_file(char *backup_file,
 	return 1;
 error:
 	close(*fdlist);
+	*fdlist = -1;
+	if (!restart)
+		unlink(backup_file);
 	return 0;
 }
 
@@ -3072,9 +3096,12 @@ static int reshape_array(char *container, int fd, char *devname,
 	unsigned long blocks;
 	unsigned long long array_size;
 	int done;
+	int *backup_fdp = NULL;
 	struct mdinfo *sra = NULL;
 	char buf[SYSFS_MAX_BUF_SIZE];
 	bool located_backup = false;
+	bool backup_created = false;
+	bool reshape_started = false;
 
 	/* when reshaping a RAID0, the component_size might be zero.
 	 * So try to fix that up.
@@ -3387,6 +3414,8 @@ static int reshape_array(char *container, int fd, char *devname,
 			devname);
 		goto release;
 	}
+	if (!info->reshape_active)
+		remove_backup_link(sra->sys_name);
 
 	if (!backup_file)
 		switch(set_new_data_offset(sra, st, devname,
@@ -3506,6 +3535,8 @@ started:
 						      sra->sys_name, restart)) {
 				goto release;
 			}
+			backup_created = !restart;
+			backup_fdp = fdlist + d;
 			d++;
 		}
 	}
@@ -3531,6 +3562,7 @@ started:
 		       restart ? "continue" : "start", devname);
 		goto release;
 	}
+	reshape_started = true;
 	if (restart)
 		sysfs_set_str(sra, NULL, "array_state", "active");
 
@@ -3691,6 +3723,12 @@ out:
 	exit(0);
 
 release:
+	if (backup_created && !reshape_started) {
+		close_fd(backup_fdp);
+		unlink(backup_file);
+		if (sra)
+			remove_backup_link(sra->sys_name);
+	}
 	if (located_backup)
 		free(backup_file);
 	free(fdlist);
