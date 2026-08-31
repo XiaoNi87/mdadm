@@ -2866,6 +2866,8 @@ static int impose_reshape(struct mdinfo *sra,
 	sra->new_chunk = info->new_chunk;
 
 	if (restart) {
+		unsigned long long reshape_position;
+
 		/* for external metadata checkpoint saved by mdmon can be lost
 		 * or missed /due to e.g. crash/. Check if md is not during
 		 * restart farther than metadata points to.
@@ -2873,6 +2875,14 @@ static int impose_reshape(struct mdinfo *sra,
 		 */
 		if (st->ss->external)
 			verify_reshape_position(info, reshape->level);
+		else if (reshape->backup_blocks &&
+			 sysfs_get_ll(sra, NULL, "reshape_position",
+				      &reshape_position) == 0) {
+			if (info->reshape_progress != reshape_position)
+				dprintf("Corrected reshape progress: %llu -> %llu\n",
+					info->reshape_progress, reshape_position);
+			info->reshape_progress = reshape_position;
+		}
 		sra->reshape_progress = info->reshape_progress;
 	} else {
 		sra->reshape_progress = 0;
