@@ -910,13 +910,16 @@ static int subarray_set_num(char *container, struct mdinfo *sra, char *name, int
 int start_reshape(struct mdinfo *sra, int already_running,
 		  int before_data_disks, int data_disks, struct supertype *st)
 {
-	int err;
+	int err = 0;
 	unsigned long long sync_max_to_set;
 
-	sysfs_set_num(sra, NULL, "suspend_lo", 0x7FFFFFFFFFFFFFFFULL);
-	err = sysfs_set_num(sra, NULL, "suspend_hi", sra->reshape_progress);
-	err = err ?: sysfs_set_num(sra, NULL, "suspend_lo",
-				   sra->reshape_progress);
+	if (!already_running) {
+		sysfs_set_num(sra, NULL, "suspend_lo", 0x7FFFFFFFFFFFFFFFULL);
+		err = sysfs_set_num(sra, NULL, "suspend_hi",
+				    sra->reshape_progress);
+		err = err ?: sysfs_set_num(sra, NULL, "suspend_lo",
+					   sra->reshape_progress);
+	}
 	if (before_data_disks <= data_disks)
 		sync_max_to_set = sra->reshape_progress / data_disks;
 	else
@@ -3961,8 +3964,9 @@ int progress_reshape(struct mdinfo *info, struct reshape *reshape,
 	 *   passes this point, progress_reshape should return.  It might
 	 *   return earlier if it determines that ->reshape_progress needs
 	 *   to be updated or further backup is needed.
-	 * - suspend_point is maintained by progress_reshape and the caller
-	 *   should not touch it except to initialise to zero.
+	 * - suspend_point is maintained by progress_reshape.  For native metadata,
+	 *   child_monitor() updates it immediately before backing up a suspended
+	 *   region.
 	 *   It is an array address and it only increases in 2.6.37 and earlier.
 	 *   This makes it difficult to handle reducing reshapes with
 	 *   external metadata.
@@ -4078,8 +4082,8 @@ int progress_reshape(struct mdinfo *info, struct reshape *reshape,
 
 	/* For externally managed metadata we always need to suspend IO to
 	 * the area being reshaped so we regularly push suspend_point forward.
-	 * For native metadata we only need the suspend if we are going to do
-	 * a backup.
+	 * child_monitor() suspends native metadata only when it is ready to
+	 * back up the critical section.
 	 */
 	if (advancing) {
 		if ((need_backup > info->reshape_progress ||
@@ -4095,17 +4099,7 @@ int progress_reshape(struct mdinfo *info, struct reshape *reshape,
 			if (max_progress > *suspend_point)
 				max_progress = *suspend_point;
 		}
-	} else {
-		if (info->array.major_version >= 0) {
-			/* Only need to suspend when about to backup */
-			if (info->reshape_progress < need_backup * 2 &&
-			    *suspend_point > 0) {
-				*suspend_point = 0;
-				sysfs_set_num(info, NULL, "suspend_lo", 0);
-				sysfs_set_num(info, NULL, "suspend_hi",
-					      need_backup);
-			}
-		} else {
+		} else if (info->array.major_version < 0) {
 			/* Need to suspend continually */
 			if (info->reshape_progress < *suspend_point)
 				*suspend_point = info->reshape_progress;
@@ -4122,7 +4116,6 @@ int progress_reshape(struct mdinfo *info, struct reshape *reshape,
 			if (max_progress < *suspend_point)
 				max_progress = *suspend_point;
 		}
-	}
 
 	/* now set sync_max to allow that progress. sync_max, like
 	 * sync_completed is a count of sectors written per device, so
@@ -4721,6 +4714,14 @@ int child_monitor(int afd, struct mdinfo *sra, struct reshape *reshape,
 			sysfs_set_str(sra, NULL, "sync_max", "max");
 			done = 1;
 			break;
+		}
+		if (rv && !increasing && suspend_point > 0) {
+			dprintf("Suspend [0, %llu) for backup at %llu\n",
+				backup_point, sra->reshape_progress);
+			if (sysfs_set_num(sra, NULL, "suspend_hi", backup_point) ||
+			    sysfs_set_num(sra, NULL, "suspend_lo", 0))
+				goto abort;
+			suspend_point = 0;
 		}
 
 		while (rv) {
