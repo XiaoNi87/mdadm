@@ -4783,6 +4783,12 @@ out:
 	sysfs_set_num(sra, NULL, "suspend_hi", 0);
 	sysfs_set_num(sra, NULL, "suspend_lo", 0);
 	sysfs_set_num(sra, NULL, "sync_min", 0);
+	if (done &&
+	    sysfs_set_str(sra, NULL, "sync_max", "max") < 0) {
+		pr_err("%s: failed to reset sync_max after reshape: %s\n",
+		       sra->sys_name, strerror(errno));
+		done = 0;
+	}
 
 	validate_free_buffers();
 	free(buf);
